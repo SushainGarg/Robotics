@@ -1,3 +1,13 @@
+Code Explanation:
+
+- The code uses Standard caliberation functions to setup lineSensors and Proximity Sensors.
+- To define a standard unit distance, the code considers the distance covered by the robot moving at 100 speed for 500 milliseconds as measured by the encoders.
+- The code uses a pre-defined set of directions to navigate the maze while also mapping the maze in an array 0s and 1s with 1 representing path and 0 everything else.
+- As the robot moves through the maze, the array is updated with 1s in place of 0s.
+- the code detects for objects in rooms and rcords the coordinate.
+- The code uses manhatten distance to measure distance to objects from current position, finding shortest distance.
+- the code navigates thorugh maze to object with the shortest distance, based on the array of 0s and 1s.
+
 Building Program.
 
  - Open .ino file in Arduino IDE
