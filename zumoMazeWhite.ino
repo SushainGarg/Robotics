@@ -1,3 +1,4 @@
+#include <QueueArray.h>
 #include <Wire.h>
 #include <Zumo32U4.h>
 #define MAZE_WIDTH 14
@@ -83,7 +84,21 @@ int16_t gyroOffset;
 // This variable helps us keep track of how much time has passed
 // between readings of the gyro.
 uint16_t gyroLastUpdate = 0;
-int mazeGrid[MAZE_HEIGHT][MAZE_WIDTH] = {0};
+int mazeGridDefined[MAZE_WIDTH][MAZE_HEIGHT] = {{1,1,1,1,1,1,1,1,1,1},
+                                                {1,0,0,0,1,0,0,0,0,1},
+                                                {1,0,0,0,1,0,0,0,0,1},
+                                                {1,1,1,0,1,0,0,0,0,1},
+                                                {1,0,0,0,1,0,0,0,0,1},
+                                                {1,0,0,0,1,0,0,0,0,0},
+                                                {1,0,0,0,1,0,0,0,0,0},
+                                                {1,0,0,0,1,1,1,0,0,0},
+                                                {1,1,1,0,1,0,0,0,0,0},
+                                                {1,0,0,0,1,0,0,0,0,0},
+                                                {1,1,1,1,1,1,1,1,0,0},
+                                                {1,0,0,0,1,0,0,0,0,0},
+                                                {1,0,0,0,1,1,1,0,0,0},
+                                                {1,1,1,0,1,1,1,0,0,0}};
+int mazeGrid[MAZE_WIDTH][MAZE_HEIGHT] = {0};
 
 uint16_t lineSensorValues[numSensors];
 const float wheelDiameter = 3.9;
@@ -455,17 +470,6 @@ int manhattanDistance(Coordinate a, Coordinate b) {
     return abs(a.x - b.x) + abs(a.y - b.y);
 }
 
-void printMazeGrid() {
-    for (int i = 0; i < MAZE_HEIGHT; i++) {
-        for (int j = 0; j < MAZE_WIDTH; j++) {
-            Serial.print(mazeGrid[i][j]);
-            Serial.print(" "); // Print a space for readability
-        }
-        Serial.println(); // Print a newline at the end of each row
-    }
-}
-
-
 // Find the nearest object
 int findNearestObject() {
     int nearestObjectIndex = -1;
@@ -508,29 +512,48 @@ void turnToDirection(int desiredDirection) {
 void navigateToCoordinate(Coordinate target) {
     while (posX != target.x || posY != target.y) {
         // Determine the desired direction based on the target position
-        int desiredDirection;
+        int desiredDirection = -1; // Initialize with an invalid direction
+        
         if (posX < target.x) {
             desiredDirection = 1; // East
         } else if (posX > target.x) {
             desiredDirection = 3; // West
-        } else if (posY < target.y) {
-            desiredDirection = 2; // South
-        } else if (posY > target.y) {
-            desiredDirection = 0; // North
-        } else {
-            // Already at the target position
-            return;
+        }
+        
+        // If posX is already at target.x, then check posY
+        if (desiredDirection == -1) {
+            if (posY < target.y) {
+                desiredDirection = 2; // South
+            } else if (posY > target.y) {
+                desiredDirection = 0; // North
+            }
+        }
+        
+        // Check if we are already at the target position
+        if (desiredDirection == -1) {
+            return; // Already at the target position
         }
 
         // Turn to face the desired direction
         turnToDirection(desiredDirection);
 
-        // Move forward if the next cell in the desired direction is part of the path
-        if (mazeGrid[posY + (desiredDirection == 2) - (desiredDirection == 0)][posX + (desiredDirection == 1) - (desiredDirection == 3)] == 1) {
+        // Move forward if the next Coordinate in the desired direction is part of the path
+        if (mazeGridDefined[posY + (desiredDirection == 2) - (desiredDirection == 0)][posX + (desiredDirection == 1) - (desiredDirection == 3)] == 1) {
             moveForwardOneStep(straightSpeed);
+
+            // Update posX and posY after moving
+            if (desiredDirection == 1) posX++; // East
+            else if (desiredDirection == 3) posX--; // West
+            else if (desiredDirection == 2) posY++; // South
+            else if (desiredDirection == 0) posY--; // North
         }
     }
+   buzzer.playFrequency(1000, 5000, 15);
+    // Wait for the beep to finish. Adjust the delay if you change the beep duration.
+  delay(10000);
+
 }
+
 
 void navigateToObjects(){
    while (objectCount > 0) {
@@ -548,6 +571,100 @@ void navigateToObjects(){
     // After navigating to all objects, return to the starting position (0,0)
     Coordinate start = {0, 0};
     navigateToCoordinate(start);
+}
+
+void traceBackPath(int distances[MAZE_WIDTH][MAZE_HEIGHT], Coordinate start, Coordinate target, QueueArray<Coordinate>& path) {
+    Coordinate current = target;
+    path.enqueue(current); // Start with the target
+
+    while (!(current.x == start.x && current.y == start.y)) {
+        Coordinate adjacents[4] = {{current.x, current.y - 1}, {current.x, current.y + 1},
+                             {current.x - 1, current.y}, {current.x + 1, current.y}};
+        for (Coordinate adj : adjacents) {
+            if (adj.x >= 0 && adj.x < MAZE_WIDTH && adj.y >= 0 && adj.y < MAZE_HEIGHT) {
+                if (distances[adj.x][adj.y] == distances[current.x][current.y] - 1) {
+                    path.enqueue(adj); // Add to path
+                    current = adj; // Move to next Coordinate
+                    break; // Break the loop after finding the next step
+                }
+            }
+        }
+    }
+}
+
+void floodFill(int maze[MAZE_WIDTH][MAZE_HEIGHT], Coordinate start, Coordinate target, QueueArray<Coordinate>& path) {
+    int distances[MAZE_WIDTH][MAZE_HEIGHT];
+    QueueArray<Coordinate> queue;
+
+    // Initialize distances array
+    for (int i = 0; i < MAZE_WIDTH; i++) {
+        for (int j = 0; j < MAZE_HEIGHT; j++) {
+            distances[i][j] = -1;
+        }
+    }
+
+    distances[start.x][start.y] = 0;
+    queue.enqueue(start);
+
+    while (!queue.isEmpty()) {
+        Coordinate current = queue.dequeue();
+
+        // Explore adjacent Coordinates
+        Coordinate adjacents[4] = {{current.x, current.y - 1}, {current.x, current.y + 1},
+                             {current.x - 1, current.y}, {current.x + 1, current.y}};
+        for (Coordinate adj : adjacents) {
+            if (adj.x >= 0 && adj.x < MAZE_WIDTH && adj.y >= 0 && adj.y < MAZE_HEIGHT) {
+                if (maze[adj.x][adj.y] == 1 && distances[adj.x][adj.y] == -1) {
+                    distances[adj.x][adj.y] = distances[current.x][current.y] + 1;
+                    queue.enqueue(adj);
+                }
+            }
+        }
+    }
+
+    // Trace back the path from target to start
+    traceBackPath(distances, start, target, path);
+}
+
+void navigatePath(QueueArray<Coordinate>& path) {
+    if (path.isEmpty()) return; // No path to navigate
+
+    Coordinate current = path.dequeue();
+
+    while (!path.isEmpty()) {
+        Coordinate next = path.dequeue();
+
+        // Determine the direction to move (flipped directions)
+        if (next.x == current.x) {
+            if (next.y == current.y - 1) {
+                // Previously North, now South
+                turnToDirection(2);
+            } else if (next.y == current.y + 1) {
+                // Previously South, now North
+                turnToDirection(0);
+            }
+        } else if (next.y == current.y) {
+            if (next.x == current.x - 1) {
+                // Previously West, now East
+                turnToDirection(1);
+            } else if (next.x == current.x + 1) {
+                // Previously East, now West
+                turnToDirection(3);
+            }
+        }
+
+        // Move to the next Coordinate
+        moveForwardOneStep(straightSpeed); // Implement this function based on your robot's control system
+
+        // Update current Coordinate
+        current = next;
+    }
+}
+
+void clearQueue(QueueArray<Coordinate>& queue) {
+    while (!queue.isEmpty()) {
+        queue.dequeue();
+    }
 }
 
 
@@ -681,6 +798,23 @@ void backtrack(int mazeIndex){
     }
 }
 
+void updateObjectCoordinate(int mazeIndex){
+  if(mazeIndex == 4){
+    objectCoordinates[objectCount] = {7, 5};
+  }
+  if(mazeIndex == 16){
+    objectCoordinates[objectCount] = {13, 5};
+  }
+  if(mazeIndex == 28){
+    objectCoordinates[objectCount] = {14, 1};
+  }
+  if(mazeIndex == 34){
+    objectCoordinates[objectCount] = {8, 1};
+  }
+   if(mazeIndex == 40){
+    objectCoordinates[objectCount] = {3, 1};
+  }
+}
 // Mviing forward by a specified amount of steps and detecting objects
 void moveForwardSteps(int steps , int mazeIndex) {
   for (int i = 0; i < steps; i++) {
@@ -691,8 +825,9 @@ void moveForwardSteps(int steps , int mazeIndex) {
           objectDetected = true;
           objectLocationStep = currentStep;
           objectOrder++;
+          objectCount+= 1;
           objectLocationIndex[objectOrder] = i;
-          objectCoordinates[objectCount++] = {posX, posY};
+          updateObjectCoordinate(mazeIndex);
           backtrack(mazeIndex);
           currentStep = 0;
           return;
@@ -752,27 +887,44 @@ bool checkForObject() {
     // Implement object detection logic
     // Return true if an object is detected
   proximitySensors.read(); // Read the proximity sensor values
-if (proximitySensors.countsFrontWithLeftLeds() >=6 || proximitySensors.countsFrontWithRightLeds() >= 6) {
-    // Detected an object in front, turn around
-    motors.setSpeeds(0, 0);
-    // Play a beep sound at 1000 Hz for 1000 milliseconds (1 second) at full volume.
-    buzzer.playFrequency(1000, 1000, 15);
-    // Wait for the beep to finish. Adjust the delay if you change the beep duration.
-    delay(10000);
-    return true; // Two right turns to make a 180-degree turn
-  }else{
-    return false;
-  }
+  if (proximitySensors.countsFrontWithLeftLeds() >=6 || proximitySensors.countsFrontWithRightLeds() >= 6) {
+      // Detected an object in front, turn around
+      motors.setSpeeds(0, 0);
+      // Play a beep sound at 1000 Hz for 1000 milliseconds (1 second) at full volume.
+      buzzer.playFrequency(1000, 1000, 15);
+      // Wait for the beep to finish. Adjust the delay if you change the beep duration.
+      delay(10000);
+      return true; // Two right turns to make a 180-degree turn
+    }else{
+      return false;
+    }
     
 }
-
+Coordinate start = {0,0};
 
 void loop() {
     navigateMaze(); // To navigate thorugh the maze
-    buzzer.playFrequency(1000, 5000, 15);
-    // Wait for the beep to finish. Adjust the delay if you change the beep duration.
-    delay(10000);
-    navigateToObjects(); // to find objects
+    // posX = 0; // X position
+    // posY = 0;
+    // navigateToObjects(); // to find objects
+     for (int i = 0; i < 3; i++) {
+        QueueArray<Coordinate> path;
+        floodFill(mazeGridDefined, start, objectCoordinates[i], path);
+        navigatePath(path);
+        buzzer.playFrequency(1000, 5000, 15);
+        // Wait for the beep to finish. Adjust the delay if you change the beep duration.
+        delay(5000);
+        // Navigate back to start
+        // Clear the path queue for reuse
+        clearQueue(path);
+        floodFill(mazeGridDefined, objectCoordinates[i], start, path);
+        navigatePath(path);
 
+        buzzer.playFrequency(1000, 5000, 15);
+        // Wait for the beep to finish. Adjust the delay if you change the beep duration.
+        delay(5000);
+    }
+
+   
 }
 
